@@ -11,6 +11,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <memory>
 #include "world.h"
+#include "TextureMap.h"
 
 namespace mycraft
 {
@@ -34,6 +35,11 @@ namespace mycraft
 			world_ = std::move(world);
 		}
 
+		void set_texture_storage(std::shared_ptr<TextureStorage> ts)
+		{
+			ts_ = std::move(ts);
+		}
+
 		const std::shared_ptr<World>& get_world() const
 		{
 			return world_;
@@ -42,6 +48,7 @@ namespace mycraft
 	private:
 		GLFWwindow *window_;
 		std::shared_ptr<World> world_;
+		std::shared_ptr<TextureStorage> ts_;
 		GLuint shader_program_;
 		GLuint vbo;
 
@@ -51,6 +58,7 @@ namespace mycraft
 		GLint model_uni_;
 
 		void prepare_shaders();
+		void load_textures();
 		void render_world(CoordElem pos_x, CoordElem pos_y, CoordElem pos_z);
 
 		size_t load_chunk_vertices(const Chunk& chunk);

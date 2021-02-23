@@ -3,6 +3,7 @@
 #include <GL/gl.h>
 #include <GLFW/glfw3.h>
 #include <cassert>
+#include <SOIL/SOIL.h>
 
 using namespace mycraft;
 
@@ -65,9 +66,11 @@ void Renderer::prepare_shaders()
 			R"glsl(
 #version 150 core
 
-in vec4 block;
+in vec3 block;
+in vec2 texCoord;
 
-out vec4 Block;
+out vec3 Block;
+out vec2 TexCoord;
 
 uniform mat4 model;
 uniform mat4 view;
@@ -75,8 +78,9 @@ uniform mat4 proj;
 
 void main()
 {
-	gl_Position = proj * view * model * vec4(block.xyz, 1.0);
+	gl_Position = proj * view * model * vec4(block, 1.0);
 	Block = block;
+	TexCoord = texCoord;
 }
 )glsl";
 
@@ -84,15 +88,18 @@ void main()
 			R"glsl(
 #version 150 core
 
-in vec4 Block;
+in vec3 Block;
+in vec2 TexCoord;
+
+uniform sampler2D tex0;
 
 out vec4 outColor;
 
 void main()
 {
-	float blk = Block.w;
-	outColor = vec4(blk/128.0, blk/256.0, blk/512.0, 1.0);
-	//outColor = vec4(1.0, 1.0, 1.0, 1.0);
+	outColor = texture(tex0, vec2(TexCoord.x / 16.0, 1.0-TexCoord.y/16.0));
+	//outColor = texture(tex0, vec2(1.5, 0.5));
+	//outColor = vec4(1.0-TexCoord.x/8.0, 1.0, 1.0, 1.0);
 }
 )glsl";
 
@@ -122,8 +129,15 @@ void Renderer::Renderer::render_loop()
 
 	// vertex attribs
 	GLint pos_attrib = glGetAttribLocation(shader_program_, "block");
+	assert(pos_attrib >= 0);
 	glEnableVertexAttribArray(pos_attrib);
-	glVertexAttribPointer(pos_attrib, 4, GL_BYTE, GL_FALSE, 0, 0);
+	glVertexAttribPointer(pos_attrib, 3, GL_BYTE, GL_FALSE, 5*sizeof(GLbyte), 0);
+
+	GLint texcoord_attrib = glGetAttribLocation(shader_program_, "texCoord");
+	assert(texcoord_attrib >= 0);
+	glEnableVertexAttribArray(texcoord_attrib);
+	glVertexAttribPointer(texcoord_attrib, 2, GL_BYTE, GL_FALSE, 5*sizeof(GLbyte),
+			(void*)(3*sizeof(GLbyte)));
 
 	// setup uniforms
 	model_uni_ = glGetUniformLocation(shader_program_, "model");
@@ -142,6 +156,9 @@ void Renderer::Renderer::render_loop()
 
 	// set winding order to Clockwise
 	glFrontFace(GL_CW);
+
+	// load textures
+	load_textures();
 
 	while (!glfwWindowShouldClose(window_))
 	{
@@ -163,7 +180,7 @@ Renderer::~Renderer()
 
 void Renderer::render_world(CoordElem pos_x, CoordElem pos_y, CoordElem pos_z)
 {
-	if (!world_)
+	if (!world_ || !ts_)
 		return;
 
 	// view
@@ -198,29 +215,90 @@ void Renderer::render_world(CoordElem pos_x, CoordElem pos_y, CoordElem pos_z)
 						glm::value_ptr(model));
 
 				glBindBuffer(GL_ARRAY_BUFFER, vbo);
-				glDrawArrays(GL_LINES, 0, elements);
+				//glDrawArrays(GL_LINES, 0, elements);
+				glDrawArrays(GL_TRIANGLES, 0, elements);
 			}
 		}
 	}
 }
 
+void Renderer::load_textures()
+{
+	GLuint texture;
+	glGenTextures(1, &texture);
+
+	int width, height;
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	unsigned char *image = SOIL_load_image("resources/texture.png", &width, &height, 0, SOIL_LOAD_RGB);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, image);
+	SOIL_free_image_data(image);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+	// setup texture uniforms
+	GLint tex0Uni = glGetUniformLocation(shader_program_, "tex0");
+	assert(tex0Uni >= 0);
+	glUniform1i(tex0Uni, 0);
+}
+
+enum TexDir
+{
+	TEX_XNEG,
+	TEX_YNEG,
+	TEX_XPOS,
+	TEX_YPOS,
+	TEX_ZNEG,
+	TEX_ZPOS
+};
+
 size_t Renderer::load_chunk_vertices(const Chunk &chunk)
 {
 	constexpr auto cl = Chunk::chunk_length;
 	constexpr auto ch = Chunk::chunk_height;
-	std::array<std::array<GLbyte, 4>, cl * cl * ch * 6 * 6> vertices;
+	constexpr auto elem_count = 5;
+	std::array<std::array<GLbyte, elem_count>, cl * cl * ch * 6 * 6> vertices;
 	size_t a = 0;
 
 	GLbyte gx, gy, gz;
 	auto s =
-			[&a, &vertices, &chunk, &gx, &gy, &gz](GLbyte x, GLbyte y,
-					GLbyte z)
+			[&a, &vertices, &chunk, &gx, &gy, &gz, ts_=this->ts_](GLbyte x, GLbyte y,
+					GLbyte z, TexDir tex_dir, bool tex_x, bool tex_y)
 					{
 						auto& array = vertices[a++];
-						array[0] = x;
-						array[1] = y;
-						array[2] = z;
-						array[3] = chunk.data()[Chunk::convert_index(gx, gy, gz)].block_id();
+						array[0] = x; // pos x
+						array[1] = y; // pos y
+						array[2] = z; // pos z
+						const auto blk_id = chunk.data()[Chunk::convert_index(gx, gy, gz)].block_id();
+						// TODO: texture id
+						const auto& tex_ = ts_->texture(blk_id-1);
+						TextureMapCoord tex;
+						switch (tex_dir)
+						{
+						case TEX_XNEG:
+							tex = tex_.xneg();
+							break;
+						case TEX_YNEG:
+							tex = tex_.yneg();
+							break;
+						case TEX_XPOS:
+							tex = tex_.xpos();
+							break;
+						case TEX_YPOS:
+							tex = tex_.ypos();
+							break;
+						case TEX_ZNEG:
+							tex = tex_.zneg();
+							break;
+						case TEX_ZPOS:
+							tex = tex_.zpos();
+							break;
+						}
+						array[3] = !tex_x ? tex.first.first : tex.second.first; // tex x
+						array[4] = !tex_y ? tex.first.second : tex.second.second; // tex y
 					};
 
 	auto exists = [&chunk](GLbyte x, GLbyte y, GLbyte z)
@@ -264,12 +342,12 @@ size_t Renderer::load_chunk_vertices(const Chunk &chunk)
 					if (j == 0 || !exists(i, j - 1, k))
 				{
 					//drawn.at(0) = a;
-					s(i, j, k);
-					s(i, j, k + 1);
-					s(i + 1, j, k + 1);
-					s(i + 1, j, k + 1);
-					s(i + 1, j, k);
-					s(i, j, k);
+					s(i, j, k, TEX_YNEG, false, false);
+					s(i, j, k + 1, TEX_YNEG, false, true);
+					s(i + 1, j, k + 1, TEX_YNEG, true, true);
+					s(i + 1, j, k + 1, TEX_YNEG, true, true);
+					s(i + 1, j, k, TEX_YNEG, true, false);
+					s(i, j, k, TEX_YNEG, false, false);
 				}
 
 				// view from positive x
@@ -283,12 +361,12 @@ size_t Renderer::load_chunk_vertices(const Chunk &chunk)
 					if (i == Chunk::chunk_length - 1 || !exists(i + 1, j, k))
 				{
 					//drawn.at(1) = a;
-					s(i + 1, j, k);
-					s(i + 1, j, k + 1);
-					s(i + 1, j + 1, k + 1);
-					s(i + 1, j + 1, k + 1);
-					s(i + 1, j + 1, k);
-					s(i + 1, j, k);
+					s(i + 1, j, k, TEX_XPOS, false, false);
+					s(i + 1, j, k + 1, TEX_XPOS, false, true);
+					s(i + 1, j + 1, k + 1, TEX_XPOS, true, true);
+					s(i + 1, j + 1, k + 1, TEX_XPOS, true, true);
+					s(i + 1, j + 1, k, TEX_XPOS, true, false);
+					s(i + 1, j, k, TEX_XPOS, false, false);
 				}
 
 				// view from positive y
@@ -302,12 +380,12 @@ size_t Renderer::load_chunk_vertices(const Chunk &chunk)
 					if (j == Chunk::chunk_length - 1 || !exists(i, j + 1, k))
 				{
 					//drawn.at(2) = a;
-					s(i + 1, j + 1, k);
-					s(i + 1, j + 1, k + 1);
-					s(i, j + 1, k + 1);
-					s(i, j + 1, k + 1);
-					s(i, j + 1, k);
-					s(i + 1, j + 1, k);
+					s(i + 1, j + 1, k, TEX_YPOS, false, false);
+					s(i + 1, j + 1, k + 1, TEX_YPOS, false, true);
+					s(i, j + 1, k + 1, TEX_YPOS, true, true);
+					s(i, j + 1, k + 1, TEX_YPOS, true, true);
+					s(i, j + 1, k, TEX_YPOS, true, false);
+					s(i + 1, j + 1, k, TEX_YPOS, false, false);
 				}
 
 				// view from negative x
@@ -321,12 +399,12 @@ size_t Renderer::load_chunk_vertices(const Chunk &chunk)
 					if (i == 0 || !exists(i - 1, j, k))
 				{
 					//drawn.at(3) = a;
-					s(i, j + 1, k);
-					s(i, j + 1, k + 1);
-					s(i, j, k + 1);
-					s(i, j, k + 1);
-					s(i, j, k);
-					s(i, j + 1, k);
+					s(i, j + 1, k, TEX_XNEG, false, false);
+					s(i, j + 1, k + 1, TEX_XNEG, false, true);
+					s(i, j, k + 1, TEX_XNEG, true, true);
+					s(i, j, k + 1, TEX_XNEG, true, true);
+					s(i, j, k, TEX_XNEG, true, false);
+					s(i, j + 1, k, TEX_XNEG, false, false);
 				}
 
 				// view from negative z
@@ -336,12 +414,12 @@ size_t Renderer::load_chunk_vertices(const Chunk &chunk)
 					if (k == 0 || !exists(i, j, k - 1))
 				{
 					//drawn.at(4) = a;
-					s(i, j, k);
-					s(i, j + 1, k);
-					s(i + 1, j + 1, k);
-					s(i + 1, j + 1, k);
-					s(i + 1, j, k);
-					s(i, j, k);
+					s(i, j, k, TEX_ZNEG, false, false);
+					s(i, j + 1, k, TEX_ZNEG, false, true);
+					s(i + 1, j + 1, k, TEX_ZNEG, true, true);
+					s(i + 1, j + 1, k, TEX_ZNEG, true, true);
+					s(i + 1, j, k, TEX_ZNEG, true, false);
+					s(i, j, k, TEX_ZNEG, false, false);
 				}
 
 				// view from positive z
@@ -354,20 +432,20 @@ size_t Renderer::load_chunk_vertices(const Chunk &chunk)
 					if (k == Chunk::chunk_height - 1 || !exists(i, j, k + 1))
 				{
 					//drawn.at(5) = a;
-					s(i, j, k + 1);
-					s(i, j + 1, k + 1);
-					s(i + 1, j + 1, k + 1);
-					s(i + 1, j + 1, k + 1);
-					s(i + 1, j, k + 1);
-					s(i, j, k + 1);
+					s(i, j, k + 1, TEX_ZPOS, false, false);
+					s(i, j + 1, k + 1, TEX_ZPOS, false, true);
+					s(i + 1, j + 1, k + 1, TEX_ZPOS, true, true);
+					s(i + 1, j + 1, k + 1, TEX_ZPOS, true, true);
+					s(i + 1, j, k + 1, TEX_ZPOS, true, false);
+					s(i, j, k + 1, TEX_ZPOS, false, false);
 				}
 			}
 		}
 	}
 
 	glBindBuffer(GL_ARRAY_BUFFER, vbo);
-	glBufferData(GL_ARRAY_BUFFER, 4 * a * sizeof(GLbyte), vertices.data(),
+	glBufferData(GL_ARRAY_BUFFER, elem_count * a * sizeof(GLbyte), vertices.data(),
 			GL_STATIC_DRAW);
 	chunk.set_changed(false);
-	return 4 * a;
+	return elem_count * a;
 }
