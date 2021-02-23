@@ -198,7 +198,7 @@ void Renderer::render_world(CoordElem pos_x, CoordElem pos_y, CoordElem pos_z)
 						glm::value_ptr(model));
 
 				glBindBuffer(GL_ARRAY_BUFFER, vbo);
-				glDrawArrays(GL_TRIANGLES, 0, elements);
+				glDrawArrays(GL_LINES, 0, elements);
 			}
 		}
 	}
@@ -232,20 +232,38 @@ size_t Renderer::load_chunk_vertices(const Chunk &chunk)
 	{
 		for (int j = 0; j < Chunk::chunk_length; j++)
 		{
+			// flag for z-axis merging
+			//std::optional<Block> last_blk = {};
+			//std::array<size_t, 6> drawn = {};
+
 			for (int k = 0; k < Chunk::chunk_height; k++)
 			{
-				if (!exists(i, j, k))
+				const auto& blk = chunk.data()[Chunk::convert_index(i, j, k)];
+
+				if (blk.block_id() == 0)
 				{
 					continue;
 				}
+
+				//const bool can_merge = last_blk.has_value() && last_blk.value().block_id() == blk.block_id();
 
 				gx = i;
 				gy = j;
 				gz = k;
 
+				//last_blk = std::optional<Block>(blk);
+
 				// view from negative y
-				if (j == 0 || !exists(i, j - 1, k))
+//				if (can_merge)
+//				{
+//					vertices[drawn.at(0)+1][2] = k+1;
+//					vertices[drawn.at(0)+2][2] = k+1;
+//					vertices[drawn.at(0)+3][2] = k+1;
+//				}
+//				else
+					if (j == 0 || !exists(i, j - 1, k))
 				{
+					//drawn.at(0) = a;
 					s(i, j, k);
 					s(i, j, k + 1);
 					s(i + 1, j, k + 1);
@@ -255,8 +273,16 @@ size_t Renderer::load_chunk_vertices(const Chunk &chunk)
 				}
 
 				// view from positive x
-				if (i == Chunk::chunk_length - 1 || !exists(i + 1, j, k))
+//				if (can_merge)
+//				{
+//					vertices[drawn.at(1)+1][2] = k+1;
+//					vertices[drawn.at(1)+2][2] = k+1;
+//					vertices[drawn.at(1)+3][2] = k+1;
+//				}
+//				else
+					if (i == Chunk::chunk_length - 1 || !exists(i + 1, j, k))
 				{
+					//drawn.at(1) = a;
 					s(i + 1, j, k);
 					s(i + 1, j, k + 1);
 					s(i + 1, j + 1, k + 1);
@@ -266,8 +292,16 @@ size_t Renderer::load_chunk_vertices(const Chunk &chunk)
 				}
 
 				// view from positive y
-				if (j == Chunk::chunk_length - 1 || !exists(i, j + 1, k))
+//				if (can_merge)
+//				{
+//					vertices[drawn.at(2)+1][2] = k+1;
+//					vertices[drawn.at(2)+2][2] = k+1;
+//					vertices[drawn.at(2)+3][2] = k+1;
+//				}
+//				else
+					if (j == Chunk::chunk_length - 1 || !exists(i, j + 1, k))
 				{
+					//drawn.at(2) = a;
 					s(i + 1, j + 1, k);
 					s(i + 1, j + 1, k + 1);
 					s(i, j + 1, k + 1);
@@ -277,8 +311,16 @@ size_t Renderer::load_chunk_vertices(const Chunk &chunk)
 				}
 
 				// view from negative x
-				if (i == 0 || !exists(i - 1, j, k))
+//				if (can_merge)
+//				{
+//					vertices[drawn.at(3)+1][2] = k+1;
+//					vertices[drawn.at(3)+2][2] = k+1;
+//					vertices[drawn.at(3)+3][2] = k+1;
+//				}
+//				else
+					if (i == 0 || !exists(i - 1, j, k))
 				{
+					//drawn.at(3) = a;
 					s(i, j + 1, k);
 					s(i, j + 1, k + 1);
 					s(i, j, k + 1);
@@ -288,8 +330,12 @@ size_t Renderer::load_chunk_vertices(const Chunk &chunk)
 				}
 
 				// view from negative z
-				if (k == 0 || !exists(i, j, k - 1))
+//				if (can_merge)
+//				{}
+//				else
+					if (k == 0 || !exists(i, j, k - 1))
 				{
+					//drawn.at(4) = a;
 					s(i, j, k);
 					s(i, j + 1, k);
 					s(i + 1, j + 1, k);
@@ -299,8 +345,15 @@ size_t Renderer::load_chunk_vertices(const Chunk &chunk)
 				}
 
 				// view from positive z
-				if (k == Chunk::chunk_height - 1 || !exists(i, j, k + 1))
+//				if (can_merge)
+//				{
+//					for (int i=0; i<6; i++)
+//						vertices[drawn.at(5)+i][2] = k+1;
+//				}
+//				else
+					if (k == Chunk::chunk_height - 1 || !exists(i, j, k + 1))
 				{
+					//drawn.at(5) = a;
 					s(i, j, k + 1);
 					s(i, j + 1, k + 1);
 					s(i + 1, j + 1, k + 1);
