@@ -26,15 +26,6 @@ int main(int argc, char **argv)
 			}
 	auto chunk = std::make_shared<Chunk>(blks);
 
-	std::array<Block, Chunk::chunk_length*Chunk::chunk_length*Chunk::chunk_height> blks2;
-		for (int i=0; i<Chunk::chunk_length; i++)
-			for (int j=0; j<Chunk::chunk_length; j++)
-				for (int k=0; k<Chunk::chunk_height; k++) {
-					int id = k == Chunk::chunk_height-1 ? 2 : 1;
-					blks2[Chunk::convert_index(i, j, k)].set_block_id(id);
-				}
-	auto chunk2 = std::make_shared<Chunk>(blks2);
-
 	auto sts = std::make_shared<TextureStorage>(standard_texture_storage());
 
 	auto world = std::make_shared<World>();

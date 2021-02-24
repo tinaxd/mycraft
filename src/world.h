@@ -55,8 +55,9 @@ class Coord3D
 public:
 	Coord3D(Elem x, Elem y, Elem z) :
 			_x(x), _y(y), _z(z)
-	{
-	}
+	{}
+
+	Coord3D() : Coord3D(0, 0, 0) {}
 
 	const Elem& x() const
 	{
@@ -123,9 +124,9 @@ public:
 	std::optional<std::shared_ptr<Chunk>>
 	chunk(const ChunkCoord &c) const
 	{
-		auto it = chunks_.find(c);
+		const auto it = chunks_.find(c);
 		if (it == chunks_.end()) return {};
-		else return std::optional(it->second);
+		else return std::optional<std::shared_ptr<Chunk>>(it->second);
 	}
 
 	void set_chunk(const ChunkCoord &c, std::shared_ptr<Chunk> chunk)

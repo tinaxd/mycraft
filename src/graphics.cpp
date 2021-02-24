@@ -12,7 +12,10 @@ Renderer *mycraft::global_renderer = nullptr;
 class mycraft::KeyboardHandlerData
 {
 public:
-	KeyboardHandlerData() {}
+	KeyboardHandlerData() {
+		for (size_t i=0; i<button_state_.size(); i++)
+			button_state_.at(i) = false;
+	}
 
 private:
 	enum class KeyboardButton {
@@ -62,6 +65,8 @@ Renderer::Renderer(int window_width, int window_height,
 		glfwSetInputMode(window_, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
 	glfwSetCursorPosCallback(window_, &mousemotion_handler);
 	glfwGetCursorPos(window_, &last_cursor_xpos, &last_cursor_ypos);
+
+	chunks_.reserve(9);
 }
 
 struct ShaderCompileError: std::runtime_error
@@ -201,6 +206,15 @@ void Renderer::Renderer::render_loop()
 	// load textures
 	load_textures();
 
+	// TODO: load chunks in event loop
+	for (int i=-1; i<=1; i++)
+		for (int j=-1; j<=1; j++)
+			for (int k=-1; k<=1; k++) {
+				const auto& chunk = world_->chunk({i, j, k});
+				if (!chunk.has_value()) continue;
+				chunks_.push_back(ChunkCache<5>({i, j, k}, std::move(chunk.value()), ts_));
+			}
+
 	last_update_time = std::chrono::high_resolution_clock::now();
 	while (!glfwWindowShouldClose(window_))
 	{
@@ -233,36 +247,26 @@ void Renderer::render_world()
 	glm::mat4 view_pos_mat = glm::lookAt(view_pos_, view_pos_+view_look_at_vec_, glm::vec3(0, 0, 1));
 	glUniformMatrix4fv(view_uni_, 1, GL_FALSE, glm::value_ptr(view_pos_mat));
 
-	for (int i = -1; i <= 1; i++)
-	{
-		for (int j = -1; j <= 1; j++)
-		{
-			for (int k = -1; k <= 1; k++)
-			{
-				const auto &chunk = world_->chunk(
-				{ i, j, k });
-				if (!chunk.has_value())
-					continue;
+	// draw loaded chunks
+	for (const auto& chunk : chunks_) {
+		const auto& coord = chunk.chunk_coord();
+		size_t elements = load_chunk_vertices(chunk);
 
-				size_t elements = load_chunk_vertices(*chunk.value());
+		glEnable(GL_CULL_FACE);
+		glEnable(GL_DEPTH_TEST);
 
-				glEnable(GL_CULL_FACE);
-				glEnable(GL_DEPTH_TEST);
+		// model
+		glm::mat4 model(1.0f);
+		constexpr auto cl = Chunk::chunk_length;
+		constexpr auto ch = Chunk::chunk_height;
+		model = glm::translate(model,
+				glm::vec3(cl * coord.x(), cl * coord.y(), ch * coord.z()));
+		glUniformMatrix4fv(model_uni_, 1, GL_FALSE,
+				glm::value_ptr(model));
 
-				// model
-				glm::mat4 model(1.0f);
-				constexpr auto cl = Chunk::chunk_length;
-				constexpr auto ch = Chunk::chunk_height;
-				model = glm::translate(model,
-						glm::vec3(cl * i, cl * j, ch * k));
-				glUniformMatrix4fv(model_uni_, 1, GL_FALSE,
-						glm::value_ptr(model));
-
-				glBindBuffer(GL_ARRAY_BUFFER, vbo);
-				//glDrawArrays(GL_LINES, 0, elements);
-				glDrawArrays(GL_TRIANGLES, 0, elements);
-			}
-		}
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
+		//glDrawArrays(GL_LINES, 0, elements);
+		glDrawArrays(GL_TRIANGLES, 0, elements);
 	}
 }
 
@@ -296,199 +300,16 @@ enum TexDir
 	TEX_XNEG, TEX_YNEG, TEX_XPOS, TEX_YPOS, TEX_ZNEG, TEX_ZPOS
 };
 
-size_t Renderer::load_chunk_vertices(const Chunk &chunk)
+size_t Renderer::load_chunk_vertices(const ChunkCache<5> &cc)
 {
-	constexpr auto cl = Chunk::chunk_length;
-	constexpr auto ch = Chunk::chunk_height;
-	constexpr auto elem_count = 5;
-	std::array<std::array<GLbyte, elem_count>, cl * cl * ch * 6 * 6> vertices;
-	size_t a = 0;
-
-	GLbyte gx, gy, gz;
-	auto s =
-			[&a, &vertices, &chunk, &gx, &gy, &gz, ts_=this->ts_](GLbyte x,
-					GLbyte y, GLbyte z, TexDir tex_dir, bool tex_x, bool tex_y)
-					{
-						auto& array = vertices[a++];
-						array[0] = x; // pos x
-					array[1] = y;// pos y
-					array[2] = z;// pos z
-					const auto blk_id = chunk.data()[Chunk::convert_index(gx, gy, gz)].block_id();
-					// TODO: texture id
-					const auto& tex_ = ts_->texture(blk_id-1);
-					TextureMapCoord tex;
-					switch (tex_dir)
-					{
-						case TEX_XNEG:
-						tex = tex_.xneg();
-						break;
-						case TEX_YNEG:
-						tex = tex_.yneg();
-						break;
-						case TEX_XPOS:
-						tex = tex_.xpos();
-						break;
-						case TEX_YPOS:
-						tex = tex_.ypos();
-						break;
-						case TEX_ZNEG:
-						tex = tex_.zneg();
-						break;
-						case TEX_ZPOS:
-						tex = tex_.zpos();
-						break;
-					}
-					array[3] = !tex_x ? tex.first.first : tex.second.first; // tex x
-					array[4] = !tex_y ? tex.first.second : tex.second.second;// tex y
-				};
-
-	auto exists = [&chunk](GLbyte x, GLbyte y, GLbyte z)
-	{
-		return chunk.data()[Chunk::convert_index(x, y, z)].block_id() != 0;
-	};
-
-	for (int i = 0; i < Chunk::chunk_length; i++)
-	{
-		for (int j = 0; j < Chunk::chunk_length; j++)
-		{
-			// flag for z-axis merging
-			//std::optional<Block> last_blk = {};
-			//std::array<size_t, 6> drawn = {};
-
-			for (int k = 0; k < Chunk::chunk_height; k++)
-			{
-				const auto &blk = chunk.data()[Chunk::convert_index(i, j, k)];
-
-				if (blk.block_id() == 0)
-				{
-					continue;
-				}
-
-				//const bool can_merge = last_blk.has_value() && last_blk.value().block_id() == blk.block_id();
-
-				gx = i;
-				gy = j;
-				gz = k;
-
-				//last_blk = std::optional<Block>(blk);
-
-				// view from negative y
-//				if (can_merge)
-//				{
-//					vertices[drawn.at(0)+1][2] = k+1;
-//					vertices[drawn.at(0)+2][2] = k+1;
-//					vertices[drawn.at(0)+3][2] = k+1;
-//				}
-//				else
-				if (j == 0 || !exists(i, j - 1, k))
-				{
-					//drawn.at(0) = a;
-					s(i, j, k, TEX_YNEG, false, false);
-					s(i, j, k + 1, TEX_YNEG, false, true);
-					s(i + 1, j, k + 1, TEX_YNEG, true, true);
-					s(i + 1, j, k + 1, TEX_YNEG, true, true);
-					s(i + 1, j, k, TEX_YNEG, true, false);
-					s(i, j, k, TEX_YNEG, false, false);
-				}
-
-				// view from positive x
-//				if (can_merge)
-//				{
-//					vertices[drawn.at(1)+1][2] = k+1;
-//					vertices[drawn.at(1)+2][2] = k+1;
-//					vertices[drawn.at(1)+3][2] = k+1;
-//				}
-//				else
-				if (i == Chunk::chunk_length - 1 || !exists(i + 1, j, k))
-				{
-					//drawn.at(1) = a;
-					s(i + 1, j, k, TEX_XPOS, false, false);
-					s(i + 1, j, k + 1, TEX_XPOS, false, true);
-					s(i + 1, j + 1, k + 1, TEX_XPOS, true, true);
-					s(i + 1, j + 1, k + 1, TEX_XPOS, true, true);
-					s(i + 1, j + 1, k, TEX_XPOS, true, false);
-					s(i + 1, j, k, TEX_XPOS, false, false);
-				}
-
-				// view from positive y
-//				if (can_merge)
-//				{
-//					vertices[drawn.at(2)+1][2] = k+1;
-//					vertices[drawn.at(2)+2][2] = k+1;
-//					vertices[drawn.at(2)+3][2] = k+1;
-//				}
-//				else
-				if (j == Chunk::chunk_length - 1 || !exists(i, j + 1, k))
-				{
-					//drawn.at(2) = a;
-					s(i + 1, j + 1, k, TEX_YPOS, false, false);
-					s(i + 1, j + 1, k + 1, TEX_YPOS, false, true);
-					s(i, j + 1, k + 1, TEX_YPOS, true, true);
-					s(i, j + 1, k + 1, TEX_YPOS, true, true);
-					s(i, j + 1, k, TEX_YPOS, true, false);
-					s(i + 1, j + 1, k, TEX_YPOS, false, false);
-				}
-
-				// view from negative x
-//				if (can_merge)
-//				{
-//					vertices[drawn.at(3)+1][2] = k+1;
-//					vertices[drawn.at(3)+2][2] = k+1;
-//					vertices[drawn.at(3)+3][2] = k+1;
-//				}
-//				else
-				if (i == 0 || !exists(i - 1, j, k))
-				{
-					//drawn.at(3) = a;
-					s(i, j + 1, k, TEX_XNEG, false, false);
-					s(i, j + 1, k + 1, TEX_XNEG, false, true);
-					s(i, j, k + 1, TEX_XNEG, true, true);
-					s(i, j, k + 1, TEX_XNEG, true, true);
-					s(i, j, k, TEX_XNEG, true, false);
-					s(i, j + 1, k, TEX_XNEG, false, false);
-				}
-
-				// view from negative z
-//				if (can_merge)
-//				{}
-//				else
-				if (k == 0 || !exists(i, j, k - 1))
-				{
-					//drawn.at(4) = a;
-					s(i, j, k, TEX_ZNEG, false, false);
-					s(i, j + 1, k, TEX_ZNEG, false, true);
-					s(i + 1, j + 1, k, TEX_ZNEG, true, true);
-					s(i + 1, j + 1, k, TEX_ZNEG, true, true);
-					s(i + 1, j, k, TEX_ZNEG, true, false);
-					s(i, j, k, TEX_ZNEG, false, false);
-				}
-
-				// view from positive z
-//				if (can_merge)
-//				{
-//					for (int i=0; i<6; i++)
-//						vertices[drawn.at(5)+i][2] = k+1;
-//				}
-//				else
-				if (k == Chunk::chunk_height - 1 || !exists(i, j, k + 1))
-				{
-					//drawn.at(5) = a;
-					s(i, j, k + 1, TEX_ZPOS, false, false);
-					s(i, j + 1, k + 1, TEX_ZPOS, false, true);
-					s(i + 1, j + 1, k + 1, TEX_ZPOS, true, true);
-					s(i + 1, j + 1, k + 1, TEX_ZPOS, true, true);
-					s(i + 1, j, k + 1, TEX_ZPOS, true, false);
-					s(i, j, k + 1, TEX_ZPOS, false, false);
-				}
-			}
-		}
-	}
+	const auto& vertices = cc.get_vertices();
+	const auto& a = cc.elements();
+	const auto& elem_count = cc.attribute_count();
 
 	glBindBuffer(GL_ARRAY_BUFFER, vbo);
 	glBufferData(GL_ARRAY_BUFFER, elem_count * a * sizeof(GLbyte),
 			vertices.data(),
-			GL_STATIC_DRAW);
-	chunk.set_changed(false);
+			GL_DYNAMIC_DRAW);
 	return elem_count * a;
 }
 
@@ -596,4 +417,203 @@ void mycraft::mousemotion_handler(GLFWwindow *window, double xpos, double ypos)
 	lookat.x = std::cos(ax) * std::cos(ay);
 	lookat.y = std::sin(ax) * std::cos(ay);
 	lookat.z = std::sin(ay);
+}
+
+template<size_t elem_count>
+void ChunkCache<elem_count>::compute_save_vertices_cache()
+{
+	// return if cache is already generated and up-to-date.
+	if (cache_generated_ && !chunk_->changed())
+		return;
+
+	constexpr auto& cl = Chunk::chunk_length;
+	constexpr auto& ch = Chunk::chunk_height;
+	std::array<std::array<GLbyte, elem_count>, cl * cl * ch * 6 * 6> vertices;
+	size_t a = 0;
+
+	GLbyte gx, gy, gz;
+	auto s =
+			[&a, &vertices, chunk=this->chunk_, &gx, &gy, &gz, ts_=this->ts_](GLbyte x,
+					GLbyte y, GLbyte z, TexDir tex_dir, bool tex_x, bool tex_y)
+					{
+						auto& array = vertices[a++];
+						array[0] = x; // pos x
+					array[1] = y;// pos y
+					array[2] = z;// pos z
+					const auto blk_id = chunk->data()[Chunk::convert_index(gx, gy, gz)].block_id();
+					// TODO: texture id
+					const auto& tex_ = ts_->texture(blk_id-1);
+					TextureMapCoord tex;
+					switch (tex_dir)
+					{
+						case TEX_XNEG:
+						tex = tex_.xneg();
+						break;
+						case TEX_YNEG:
+						tex = tex_.yneg();
+						break;
+						case TEX_XPOS:
+						tex = tex_.xpos();
+						break;
+						case TEX_YPOS:
+						tex = tex_.ypos();
+						break;
+						case TEX_ZNEG:
+						tex = tex_.zneg();
+						break;
+						case TEX_ZPOS:
+						tex = tex_.zpos();
+						break;
+					}
+					array[3] = !tex_x ? tex.first.first : tex.second.first; // tex x
+					array[4] = !tex_y ? tex.first.second : tex.second.second;// tex y
+				};
+
+	auto exists = [chunk=this->chunk_](GLbyte x, GLbyte y, GLbyte z)
+	{
+		return chunk->data()[Chunk::convert_index(x, y, z)].block_id() != 0;
+	};
+
+	const auto& chunk = this->chunk_;
+	for (int i = 0; i < Chunk::chunk_length; i++)
+	{
+		for (int j = 0; j < Chunk::chunk_length; j++)
+		{
+			// flag for z-axis merging
+			//std::optional<Block> last_blk = {};
+			//std::array<size_t, 6> drawn = {};
+
+			for (int k = 0; k < Chunk::chunk_height; k++)
+			{
+				const auto &blk = chunk->data()[Chunk::convert_index(i, j, k)];
+
+				if (blk.block_id() == 0)
+				{
+					continue;
+				}
+
+				//const bool can_merge = last_blk.has_value() && last_blk.value().block_id() == blk.block_id();
+
+				gx = i;
+				gy = j;
+				gz = k;
+
+				//last_blk = std::optional<Block>(blk);
+
+				// view from negative y
+//				if (can_merge)
+//				{
+//					vertices[drawn.at(0)+1][2] = k+1;
+//					vertices[drawn.at(0)+2][2] = k+1;
+//					vertices[drawn.at(0)+3][2] = k+1;
+//				}
+//				else
+				if (j == 0 || !exists(i, j - 1, k))
+				{
+					//drawn.at(0) = a;
+					s(i, j, k, TEX_YNEG, false, false);
+					s(i, j, k + 1, TEX_YNEG, false, true);
+					s(i + 1, j, k + 1, TEX_YNEG, true, true);
+					s(i + 1, j, k + 1, TEX_YNEG, true, true);
+					s(i + 1, j, k, TEX_YNEG, true, false);
+					s(i, j, k, TEX_YNEG, false, false);
+				}
+
+				// view from positive x
+//				if (can_merge)
+//				{
+//					vertices[drawn.at(1)+1][2] = k+1;
+//					vertices[drawn.at(1)+2][2] = k+1;
+//					vertices[drawn.at(1)+3][2] = k+1;
+//				}
+//				else
+				if (i == Chunk::chunk_length - 1 || !exists(i + 1, j, k))
+				{
+					//drawn.at(1) = a;
+					s(i + 1, j, k, TEX_XPOS, false, false);
+					s(i + 1, j, k + 1, TEX_XPOS, false, true);
+					s(i + 1, j + 1, k + 1, TEX_XPOS, true, true);
+					s(i + 1, j + 1, k + 1, TEX_XPOS, true, true);
+					s(i + 1, j + 1, k, TEX_XPOS, true, false);
+					s(i + 1, j, k, TEX_XPOS, false, false);
+				}
+
+				// view from positive y
+//				if (can_merge)
+//				{
+//					vertices[drawn.at(2)+1][2] = k+1;
+//					vertices[drawn.at(2)+2][2] = k+1;
+//					vertices[drawn.at(2)+3][2] = k+1;
+//				}
+//				else
+				if (j == Chunk::chunk_length - 1 || !exists(i, j + 1, k))
+				{
+					//drawn.at(2) = a;
+					s(i + 1, j + 1, k, TEX_YPOS, false, false);
+					s(i + 1, j + 1, k + 1, TEX_YPOS, false, true);
+					s(i, j + 1, k + 1, TEX_YPOS, true, true);
+					s(i, j + 1, k + 1, TEX_YPOS, true, true);
+					s(i, j + 1, k, TEX_YPOS, true, false);
+					s(i + 1, j + 1, k, TEX_YPOS, false, false);
+				}
+
+				// view from negative x
+//				if (can_merge)
+//				{
+//					vertices[drawn.at(3)+1][2] = k+1;
+//					vertices[drawn.at(3)+2][2] = k+1;
+//					vertices[drawn.at(3)+3][2] = k+1;
+//				}
+//				else
+				if (i == 0 || !exists(i - 1, j, k))
+				{
+					//drawn.at(3) = a;
+					s(i, j + 1, k, TEX_XNEG, false, false);
+					s(i, j + 1, k + 1, TEX_XNEG, false, true);
+					s(i, j, k + 1, TEX_XNEG, true, true);
+					s(i, j, k + 1, TEX_XNEG, true, true);
+					s(i, j, k, TEX_XNEG, true, false);
+					s(i, j + 1, k, TEX_XNEG, false, false);
+				}
+
+				// view from negative z
+//				if (can_merge)
+//				{}
+//				else
+				if (k == 0 || !exists(i, j, k - 1))
+				{
+					//drawn.at(4) = a;
+					s(i, j, k, TEX_ZNEG, false, false);
+					s(i+1, j, k, TEX_ZNEG, true, false);
+					s(i+1, j+1, k, TEX_ZNEG, true, true);
+					s(i+1, j+1, k, TEX_ZNEG, true, true);
+					s(i, j+1, k, TEX_ZNEG, false, true);
+					s(i, j, k, TEX_ZNEG, false, false);
+				}
+
+				// view from positive z
+//				if (can_merge)
+//				{
+//					for (int i=0; i<6; i++)
+//						vertices[drawn.at(5)+i][2] = k+1;
+//				}
+//				else
+				if (k == Chunk::chunk_height - 1 || !exists(i, j, k + 1))
+				{
+					//drawn.at(5) = a;
+					s(i, j, k + 1, TEX_ZPOS, false, false);
+					s(i, j + 1, k + 1, TEX_ZPOS, false, true);
+					s(i + 1, j + 1, k + 1, TEX_ZPOS, true, true);
+					s(i + 1, j + 1, k + 1, TEX_ZPOS, true, true);
+					s(i + 1, j, k + 1, TEX_ZPOS, true, false);
+					s(i, j, k + 1, TEX_ZPOS, false, false);
+				}
+			}
+		}
+	}
+
+	chunk_->set_changed(false);
+	vertices_cache_ = vertices;
+	elements_cache_ = a;
+	cache_generated_ = true;
 }
