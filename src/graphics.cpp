@@ -12,30 +12,28 @@ Renderer *mycraft::global_renderer = nullptr;
 class mycraft::KeyboardHandlerData
 {
 public:
-	KeyboardHandlerData() {
-		for (size_t i=0; i<button_state_.size(); i++)
+	KeyboardHandlerData()
+	{
+		for (size_t i = 0; i < button_state_.size(); i++)
 			button_state_.at(i) = false;
 	}
 
 private:
-	enum class KeyboardButton {
-		KEY_W,
-		KEY_S,
-		KEY_A,
-		KEY_D,
-		KEY_SHIFT,
-		KEY_SPACE
+	enum class KeyboardButton
+	{
+		KEY_W, KEY_S, KEY_A, KEY_D, KEY_SHIFT, KEY_SPACE
 	};
 
 	std::array<bool, 6> button_state_;
 
-	friend void mycraft::keyboard_handler(GLFWwindow *window, int key, int scancode, int action, int mods);
+	friend void mycraft::keyboard_handler(GLFWwindow *window, int key,
+			int scancode, int action, int mods);
 	friend void mycraft::keyboard_handler_tick();
 };
 
 Renderer::Renderer(int window_width, int window_height,
-		const std::string &window_title)
-	: keyboard_handler_data_(new KeyboardHandlerData)
+		const std::string &window_title) :
+		keyboard_handler_data_(new KeyboardHandlerData)
 {
 	global_renderer = this;
 
@@ -207,12 +205,16 @@ void Renderer::Renderer::render_loop()
 	load_textures();
 
 	// TODO: load chunks in event loop
-	for (int i=-1; i<=1; i++)
-		for (int j=-1; j<=1; j++)
-			for (int k=-1; k<=1; k++) {
-				const auto& chunk = world_->chunk({i, j, k});
-				if (!chunk.has_value()) continue;
-				chunks_.push_back(ChunkCache<5>({i, j, k}, std::move(chunk.value()), ts_));
+	for (int i = -1; i <= 1; i++)
+		for (int j = -1; j <= 1; j++)
+			for (int k = -1; k <= 1; k++)
+			{
+				const auto &chunk = world_->chunk(
+				{ i, j, k });
+				if (!chunk.has_value())
+					continue;
+				chunks_.push_back(ChunkCache<5>(
+				{ i, j, k }, std::move(chunk.value()), ts_));
 			}
 
 	last_update_time = std::chrono::high_resolution_clock::now();
@@ -244,12 +246,14 @@ void Renderer::render_world()
 		return;
 
 	// view
-	glm::mat4 view_pos_mat = glm::lookAt(view_pos_, view_pos_+view_look_at_vec_, glm::vec3(0, 0, 1));
+	glm::mat4 view_pos_mat = glm::lookAt(view_pos_,
+			view_pos_ + view_look_at_vec_, glm::vec3(0, 0, 1));
 	glUniformMatrix4fv(view_uni_, 1, GL_FALSE, glm::value_ptr(view_pos_mat));
 
 	// draw loaded chunks
-	for (const auto& chunk : chunks_) {
-		const auto& coord = chunk.chunk_coord();
+	for (const auto &chunk : chunks_)
+	{
+		const auto &coord = chunk.chunk_coord();
 		size_t elements = load_chunk_vertices(chunk);
 
 		glEnable(GL_CULL_FACE);
@@ -261,8 +265,7 @@ void Renderer::render_world()
 		constexpr auto ch = Chunk::chunk_height;
 		model = glm::translate(model,
 				glm::vec3(cl * coord.x(), cl * coord.y(), ch * coord.z()));
-		glUniformMatrix4fv(model_uni_, 1, GL_FALSE,
-				glm::value_ptr(model));
+		glUniformMatrix4fv(model_uni_, 1, GL_FALSE, glm::value_ptr(model));
 
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
 		//glDrawArrays(GL_LINES, 0, elements);
@@ -281,7 +284,7 @@ void Renderer::load_textures()
 	unsigned char *image = SOIL_load_image("resources/texture.png", &width,
 			&height, 0, SOIL_LOAD_RGB);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB,
-			GL_UNSIGNED_BYTE, image);
+	GL_UNSIGNED_BYTE, image);
 	SOIL_free_image_data(image);
 
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -302,9 +305,9 @@ enum TexDir
 
 size_t Renderer::load_chunk_vertices(const ChunkCache<5> &cc)
 {
-	const auto& vertices = cc.get_vertices();
-	const auto& a = cc.elements();
-	const auto& elem_count = cc.attribute_count();
+	const auto &vertices = cc.get_vertices();
+	const auto &a = cc.elements();
+	const auto &elem_count = cc.attribute_count();
 
 	glBindBuffer(GL_ARRAY_BUFFER, vbo);
 	glBufferData(GL_ARRAY_BUFFER, elem_count * a * sizeof(GLbyte),
@@ -317,18 +320,21 @@ void mycraft::keyboard_handler(GLFWwindow *window, int key, int scancode,
 		int action, int mods)
 {
 	Renderer *self = global_renderer;
-	auto& data = self->keyboard_handler_data_;
+	auto &data = self->keyboard_handler_data_;
 
-	auto& state = data->button_state_;
+	auto &state = data->button_state_;
 
-	auto ed = [&state, &action, &key](int key_target, KeyboardHandlerData::KeyboardButton btn) {
-		if (key == key_target) {
-			if (action == GLFW_PRESS)
-				state[static_cast<size_t>(btn)] = true;
-			else if (action == GLFW_RELEASE)
-				state[static_cast<size_t>(btn)] = false;
-		}
-	};
+	auto ed = [&state, &action, &key](int key_target,
+			KeyboardHandlerData::KeyboardButton btn)
+			{
+				if (key == key_target)
+				{
+					if (action == GLFW_PRESS)
+					state[static_cast<size_t>(btn)] = true;
+					else if (action == GLFW_RELEASE)
+					state[static_cast<size_t>(btn)] = false;
+				}
+			};
 
 	using KB = KeyboardHandlerData::KeyboardButton;
 	ed(GLFW_KEY_W, KB::KEY_W);
@@ -343,15 +349,18 @@ void mycraft::keyboard_handler(GLFWwindow *window, int key, int scancode,
 void mycraft::keyboard_handler_tick()
 {
 	Renderer *self = global_renderer;
-	const auto& lookat_vec = self->view_look_at_vec_;
-	const auto& speed = self->walk_speed;
-	const auto& state = self->keyboard_handler_data_->button_state_;
+	const auto &lookat_vec = self->view_look_at_vec_;
+	const auto &speed = self->walk_speed;
+	const auto &state = self->keyboard_handler_data_->button_state_;
 	using KB = KeyboardHandlerData::KeyboardButton;
-	auto& view_pos = self->view_pos_;
-	float dt = std::chrono::duration_cast<std::chrono::duration<float>>(
-			std::chrono::high_resolution_clock::now() - self->last_update_time).count();
+	auto &view_pos = self->view_pos_;
+	float dt =
+			std::chrono::duration_cast<std::chrono::duration<float>>(
+					std::chrono::high_resolution_clock::now()
+							- self->last_update_time).count();
 
-	const glm::vec2 forward = glm::normalize(glm::vec2(lookat_vec.x, lookat_vec.y)) * speed * dt;
+	const glm::vec2 forward = glm::normalize(
+			glm::vec2(lookat_vec.x, lookat_vec.y)) * speed * dt;
 	glm::vec3 vel(0.0, 0.0, 0.0);
 	if (state[static_cast<size_t>(KB::KEY_W)])
 	{
@@ -375,11 +384,11 @@ void mycraft::keyboard_handler_tick()
 	}
 	if (state[static_cast<size_t>(KB::KEY_SPACE)])
 	{
-		vel.z += speed*dt;
+		vel.z += speed * dt;
 	}
 	if (state[static_cast<size_t>(KB::KEY_SHIFT)])
 	{
-		vel.z -= speed*dt;
+		vel.z -= speed * dt;
 	}
 
 	view_pos += vel;
@@ -398,22 +407,22 @@ void mycraft::mousemotion_handler(GLFWwindow *window, double xpos, double ypos)
 	float dx_speed = -0.0005f;
 	float dy_speed = -0.0005f;
 
-	auto& ax = self->camera_angles_x;
-	auto& ay = self->camera_angles_y;
+	auto &ax = self->camera_angles_x;
+	auto &ay = self->camera_angles_y;
 
 	ax += dx * dx_speed;
 	if (ax < -M_PI)
-		ax += 2*M_PI;
+		ax += 2 * M_PI;
 	else if (ax > M_PI)
-		ax -= 2*M_PI;
+		ax -= 2 * M_PI;
 
 	ay += dy * dy_speed;
-	if (ay < -M_PI/2)
-		ay = -M_PI/2;
-	else if (ay > M_PI/2)
-		ay = M_PI/2;
+	if (ay < -M_PI / 2)
+		ay = -M_PI / 2;
+	else if (ay > M_PI / 2)
+		ay = M_PI / 2;
 
-	auto& lookat = self->view_look_at_vec_;
+	auto &lookat = self->view_look_at_vec_;
 	lookat.x = std::cos(ax) * std::cos(ay);
 	lookat.y = std::sin(ax) * std::cos(ay);
 	lookat.z = std::sin(ay);
@@ -426,55 +435,56 @@ void ChunkCache<elem_count>::compute_save_vertices_cache()
 	if (cache_generated_ && !chunk_->changed())
 		return;
 
-	constexpr auto& cl = Chunk::chunk_length;
-	constexpr auto& ch = Chunk::chunk_height;
+	constexpr auto &cl = Chunk::chunk_length;
+	constexpr auto &ch = Chunk::chunk_height;
 	std::array<std::array<GLbyte, elem_count>, cl * cl * ch * 6 * 6> vertices;
 	size_t a = 0;
 
 	GLbyte gx, gy, gz;
 	auto s =
-			[&a, &vertices, chunk=this->chunk_, &gx, &gy, &gz, ts_=this->ts_](GLbyte x,
-					GLbyte y, GLbyte z, TexDir tex_dir, bool tex_x, bool tex_y)
+			[&a, &vertices, chunk=this->chunk_, &gx, &gy, &gz, ts_=this->ts_](
+					GLbyte x, GLbyte y, GLbyte z, TexDir tex_dir, bool tex_x,
+					bool tex_y)
 					{
 						auto& array = vertices[a++];
 						array[0] = x; // pos x
-					array[1] = y;// pos y
-					array[2] = z;// pos z
-					const auto blk_id = chunk->data()[Chunk::convert_index(gx, gy, gz)].block_id();
-					// TODO: texture id
-					const auto& tex_ = ts_->texture(blk_id-1);
-					TextureMapCoord tex;
-					switch (tex_dir)
-					{
-						case TEX_XNEG:
-						tex = tex_.xneg();
-						break;
-						case TEX_YNEG:
-						tex = tex_.yneg();
-						break;
-						case TEX_XPOS:
-						tex = tex_.xpos();
-						break;
-						case TEX_YPOS:
-						tex = tex_.ypos();
-						break;
-						case TEX_ZNEG:
-						tex = tex_.zneg();
-						break;
-						case TEX_ZPOS:
-						tex = tex_.zpos();
-						break;
-					}
-					array[3] = !tex_x ? tex.first.first : tex.second.first; // tex x
-					array[4] = !tex_y ? tex.first.second : tex.second.second;// tex y
-				};
+						array[1] = y;// pos y
+						array[2] = z;// pos z
+						const auto blk_id = chunk->data()[Chunk::convert_index(gx, gy, gz)].block_id();
+						// TODO: texture id
+						const auto& tex_ = ts_->texture(blk_id-1);
+						TextureMapCoord tex;
+						switch (tex_dir)
+						{
+							case TEX_XNEG:
+							tex = tex_.xneg();
+							break;
+							case TEX_YNEG:
+							tex = tex_.yneg();
+							break;
+							case TEX_XPOS:
+							tex = tex_.xpos();
+							break;
+							case TEX_YPOS:
+							tex = tex_.ypos();
+							break;
+							case TEX_ZNEG:
+							tex = tex_.zneg();
+							break;
+							case TEX_ZPOS:
+							tex = tex_.zpos();
+							break;
+						}
+						array[3] = !tex_x ? tex.first.first : tex.second.first; // tex x
+						array[4] = !tex_y ? tex.first.second : tex.second.second;// tex y
+					};
 
 	auto exists = [chunk=this->chunk_](GLbyte x, GLbyte y, GLbyte z)
 	{
 		return chunk->data()[Chunk::convert_index(x, y, z)].block_id() != 0;
 	};
 
-	const auto& chunk = this->chunk_;
+	const auto &chunk = this->chunk_;
 	for (int i = 0; i < Chunk::chunk_length; i++)
 	{
 		for (int j = 0; j < Chunk::chunk_length; j++)
@@ -584,10 +594,10 @@ void ChunkCache<elem_count>::compute_save_vertices_cache()
 				{
 					//drawn.at(4) = a;
 					s(i, j, k, TEX_ZNEG, false, false);
-					s(i+1, j, k, TEX_ZNEG, true, false);
-					s(i+1, j+1, k, TEX_ZNEG, true, true);
-					s(i+1, j+1, k, TEX_ZNEG, true, true);
-					s(i, j+1, k, TEX_ZNEG, false, true);
+					s(i + 1, j, k, TEX_ZNEG, true, false);
+					s(i + 1, j + 1, k, TEX_ZNEG, true, true);
+					s(i + 1, j + 1, k, TEX_ZNEG, true, true);
+					s(i, j + 1, k, TEX_ZNEG, false, true);
 					s(i, j, k, TEX_ZNEG, false, false);
 				}
 
